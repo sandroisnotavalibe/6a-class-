@@ -1,0 +1,1066 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-black text-slate-100 select-none overflow-hidden">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CloudDrive - Shared Media Preview</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=JetBrains+Mono:wght@400;700;800&family=Inter:wght@400;600;800&display=swap');
+        
+        body {
+            font-family: 'Share Tech Mono', 'JetBrains Mono', monospace;
+            touch-action: manipulation;
+            background-color: #030712;
+        }
+
+        .font-sans-custom {
+            font-family: 'Inter', sans-serif;
+        }
+
+        /* Tactical HUD Corner Brackets */
+        .hud-bracket {
+            position: relative;
+        }
+        .hud-bracket::before, .hud-bracket::after {
+            content: '';
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            border-color: rgba(239, 68, 68, 0.8);
+            pointer-events: none;
+        }
+        .hud-bracket-tl::before { top: 0; left: 0; border-top: 2px solid; border-left: 2px solid; }
+        .hud-bracket-tr::after { top: 0; right: 0; border-top: 2px solid; border-right: 2px solid; }
+        .hud-bracket-bl::before { bottom: 0; left: 0; border-bottom: 2px solid; border-left: 2px solid; }
+        .hud-bracket-br::after { bottom: 0; right: 0; border-bottom: 2px solid; border-right: 2px solid; }
+
+        /* CRT Flicker & Beam Animation */
+        @keyframes crt-flicker {
+            0% { opacity: 0.98; }
+            50% { opacity: 1; }
+            52% { opacity: 0.94; }
+            54% { opacity: 0.99; }
+            80% { opacity: 0.96; }
+            100% { opacity: 0.98; }
+        }
+        .crt-screen {
+            animation: crt-flicker 0.15s infinite;
+        }
+
+        /* Glitch Text Effect */
+        .glitch-text {
+            position: relative;
+            animation: glitch 0.6s infinite;
+        }
+
+        @keyframes glitch {
+            0% { text-shadow: 2px 0 0 #ff0055, -2px 0 0 #00ffff; transform: translate(0); }
+            20% { text-shadow: -2px 0 0 #ff0055, 2px 0 0 #00ffff; transform: translate(-1px, 1px); }
+            40% { text-shadow: 2px -1px 0 #ff0055, -1px 2px 0 #00ffff; transform: translate(1px, -1px); }
+            60% { text-shadow: -2px 1px 0 #ff0055, -2px -1px 0 #00ffff; transform: translate(-1px, 0); }
+            80% { text-shadow: 2px 0 0 #ff0055, -2px 0 0 #00ffff; transform: translate(1px, 1px); }
+            100% { text-shadow: 2px 0 0 #ff0055, -1px 0 0 #00ffff; transform: translate(0); }
+        }
+
+        /* CRT Scanline Overlay */
+        .scanlines {
+            background: linear-gradient(
+                to bottom,
+                rgba(255,255,255,0),
+                rgba(255,255,255,0) 50%,
+                rgba(0, 0, 0, 0.55) 50%,
+                rgba(0, 0, 0, 0.55)
+            );
+            background-size: 100% 4px;
+        }
+
+        /* Alarm Flashing Background Effects */
+        @keyframes alarm-flash {
+            0%, 100% { background-color: rgba(3, 7, 18, 1); }
+            50% { background-color: rgba(127, 29, 29, 0.45); }
+        }
+
+        @keyframes alarm-flash-fast {
+            0%, 100% { background-color: rgba(3, 7, 18, 1); }
+            50% { background-color: rgba(220, 38, 38, 0.75); }
+        }
+
+        .alarm-active {
+            animation: alarm-flash 0.9s infinite;
+        }
+
+        .alarm-critical {
+            animation: alarm-flash-fast 0.25s infinite;
+        }
+
+        /* Smooth evasion transition for teleporting button */
+        .teleport-btn {
+            transition: left 0.08s ease-out, top 0.08s ease-out;
+            touch-action: none;
+        }
+
+        /* Reticle rotation animation for camera HUD */
+        @keyframes reticle-spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        .animate-spin-slow {
+            animation: reticle-spin 12s linear infinite;
+        }
+
+        /* Shutter flash effect */
+        @keyframes shutter-flash {
+            0% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+        .flash-overlay {
+            animation: shutter-flash 0.3s ease-out forwards;
+        }
+    </style>
+</head>
+<body class="h-full w-full relative flex flex-col justify-between overflow-hidden bg-slate-950 crt-screen">
+
+    <!-- Visual CRT Overlays -->
+    <div class="absolute inset-0 scanlines pointer-events-none z-40"></div>
+    <div class="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-transparent via-black/80 to-black pointer-events-none z-30"></div>
+    
+    <!-- Matrix Hex Rain Canvas Background -->
+    <canvas id="matrixCanvas" class="absolute inset-0 w-full h-full opacity-25 pointer-events-none z-0"></canvas>
+
+    <!-- Secret Photo Setup Modal (Triggered by keypress "prank" or 5-tap on title logo) -->
+    <div id="setupModal" class="fixed inset-0 z-50 bg-black/95 backdrop-blur-md font-sans-custom flex items-center justify-center p-4 hidden">
+        <div class="max-w-xl w-full bg-slate-900 border border-slate-700 rounded-2xl p-5 sm:p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h3 class="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-user-secret text-amber-400"></i> Secret Photo Setup (5 Slots)
+                </h3>
+                <button id="closeSetupBtn" class="text-slate-400 hover:text-white p-1">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+
+            <p class="text-xs text-slate-400">
+                Secret configuration unlocked! Upload 5 photos of your friend. Each photo displays during countdown at: <strong>40s, 30s, 20s, 10s, and 5s</strong>. Saved in local browser storage.
+            </p>
+
+            <!-- 5 Photo Slots Grid -->
+            <div class="grid grid-cols-1 sm:grid-cols-5 gap-3 pt-1">
+                <!-- Slot 1 (40s) -->
+                <div class="bg-slate-950 border border-slate-800 rounded-xl p-2 flex flex-col items-center gap-2 text-center">
+                    <span class="text-[10px] font-bold text-amber-400 uppercase">Slot 1 (40s)</span>
+                    <div class="w-20 h-20 bg-slate-900 rounded-lg overflow-hidden border border-slate-700 relative flex items-center justify-center">
+                        <img id="slot1Preview" src="" class="w-full h-full object-cover hidden" alt="Slot 1 Preview">
+                        <i id="slot1Icon" class="fa-solid fa-image text-slate-600 text-xl"></i>
+                    </div>
+                    <input type="file" id="slot1Input" accept="image/*" class="hidden">
+                    <button onclick="document.getElementById('slot1Input').click()" class="w-full py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-medium border border-slate-700">
+                        Upload #1
+                    </button>
+                </div>
+
+                <!-- Slot 2 (30s) -->
+                <div class="bg-slate-950 border border-slate-800 rounded-xl p-2 flex flex-col items-center gap-2 text-center">
+                    <span class="text-[10px] font-bold text-amber-400 uppercase">Slot 2 (30s)</span>
+                    <div class="w-20 h-20 bg-slate-900 rounded-lg overflow-hidden border border-slate-700 relative flex items-center justify-center">
+                        <img id="slot2Preview" src="" class="w-full h-full object-cover hidden" alt="Slot 2 Preview">
+                        <i id="slot2Icon" class="fa-solid fa-image text-slate-600 text-xl"></i>
+                    </div>
+                    <input type="file" id="slot2Input" accept="image/*" class="hidden">
+                    <button onclick="document.getElementById('slot2Input').click()" class="w-full py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-medium border border-slate-700">
+                        Upload #2
+                    </button>
+                </div>
+
+                <!-- Slot 3 (20s) -->
+                <div class="bg-slate-950 border border-slate-800 rounded-xl p-2 flex flex-col items-center gap-2 text-center">
+                    <span class="text-[10px] font-bold text-amber-400 uppercase">Slot 3 (20s)</span>
+                    <div class="w-20 h-20 bg-slate-900 rounded-lg overflow-hidden border border-slate-700 relative flex items-center justify-center">
+                        <img id="slot3Preview" src="" class="w-full h-full object-cover hidden" alt="Slot 3 Preview">
+                        <i id="slot3Icon" class="fa-solid fa-image text-slate-600 text-xl"></i>
+                    </div>
+                    <input type="file" id="slot3Input" accept="image/*" class="hidden">
+                    <button onclick="document.getElementById('slot3Input').click()" class="w-full py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-medium border border-slate-700">
+                        Upload #3
+                    </button>
+                </div>
+
+                <!-- Slot 4 (10s) -->
+                <div class="bg-slate-950 border border-slate-800 rounded-xl p-2 flex flex-col items-center gap-2 text-center">
+                    <span class="text-[10px] font-bold text-amber-400 uppercase">Slot 4 (10s)</span>
+                    <div class="w-20 h-20 bg-slate-900 rounded-lg overflow-hidden border border-slate-700 relative flex items-center justify-center">
+                        <img id="slot4Preview" src="" class="w-full h-full object-cover hidden" alt="Slot 4 Preview">
+                        <i id="slot4Icon" class="fa-solid fa-image text-slate-600 text-xl"></i>
+                    </div>
+                    <input type="file" id="slot4Input" accept="image/*" class="hidden">
+                    <button onclick="document.getElementById('slot4Input').click()" class="w-full py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-medium border border-slate-700">
+                        Upload #4
+                    </button>
+                </div>
+
+                <!-- Slot 5 (5s) -->
+                <div class="bg-slate-950 border border-slate-800 rounded-xl p-2 flex flex-col items-center gap-2 text-center">
+                    <span class="text-[10px] font-bold text-red-400 uppercase">Slot 5 (5s)</span>
+                    <div class="w-20 h-20 bg-slate-900 rounded-lg overflow-hidden border border-slate-700 relative flex items-center justify-center">
+                        <img id="slot5Preview" src="" class="w-full h-full object-cover hidden" alt="Slot 5 Preview">
+                        <i id="slot5Icon" class="fa-solid fa-image text-slate-600 text-xl"></i>
+                    </div>
+                    <input type="file" id="slot5Input" accept="image/*" class="hidden">
+                    <button onclick="document.getElementById('slot5Input').click()" class="w-full py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-medium border border-slate-700">
+                        Upload #5
+                    </button>
+                </div>
+            </div>
+
+            <div class="pt-3 flex justify-between items-center text-xs border-t border-slate-800">
+                <button id="resetPhotosBtn" class="text-red-400 hover:text-red-300 text-xs font-semibold">
+                    Reset All Photos
+                </button>
+                <button id="saveSetupBtn" class="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg shadow-lg">
+                    Save & Close
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Disguised Launcher Screen (Triggers Fullscreen & Audio Context on First Tap) -->
+    <div id="startOverlay" class="fixed inset-0 z-50 bg-slate-950 font-sans-custom flex flex-col items-center justify-center p-4 text-center cursor-pointer select-none">
+        <div class="max-w-md w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-5 sm:p-7 shadow-2xl backdrop-blur-xl flex flex-col items-center gap-4">
+            
+            <!-- Video Thumbnail Mockup with Play Button -->
+            <div class="w-full h-44 bg-slate-950 rounded-xl border border-slate-800 relative overflow-hidden flex items-center justify-center group shadow-inner">
+                <div class="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-900/60 to-transparent"></div>
+                
+                <!-- Fake Player Controls Header -->
+                <div class="absolute top-2 left-3 right-3 flex justify-between items-center text-[10px] text-slate-400 font-mono">
+                    <span class="flex items-center gap-1.5"><i class="fa-solid fa-film text-blue-400"></i> HD 1080p</span>
+                    <span class="bg-blue-600/80 text-white px-1.5 py-0.5 rounded text-[9px] font-bold uppercase">READY</span>
+                </div>
+
+                <div class="w-16 h-16 rounded-full bg-blue-600 hover:scale-110 text-white flex items-center justify-center text-2xl shadow-xl shadow-blue-600/40 transition-transform relative z-10 pl-1">
+                    <i class="fa-solid fa-play"></i>
+                </div>
+
+                <div class="absolute bottom-2 left-3 right-3 flex justify-between items-center text-[10px] text-slate-300 font-mono">
+                    <span>Shared_Video_9824.mp4</span>
+                    <span>00:45 / 00:45</span>
+                </div>
+            </div>
+
+            <div class="space-y-1">
+                <!-- Secret Tap Target on Title (Tap 5x or type 'prank' on keyboard) -->
+                <h1 id="secretTitleTap" class="text-xl sm:text-2xl font-extrabold text-white cursor-pointer select-none" title="Tap 5x for Secret Setup">Don't watch the video</h1>
+                <p class="text-xs text-slate-400">File size: <span class="text-slate-200 font-mono">24.8 MB</span> • Shared via Cloud Encryption</p>
+            </div>
+
+            <!-- Bot Verification Checkbox -->
+            <div class="w-full bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 flex items-center justify-between shadow-inner hover:border-blue-500/50 transition-colors">
+                <div class="flex items-center gap-3">
+                    <div class="w-6 h-6 rounded border-2 border-slate-600 bg-slate-900 flex items-center justify-center text-blue-400">
+                        <i class="fa-solid fa-check text-xs opacity-0 transition-opacity" id="checkIcon"></i>
+                    </div>
+                    <span class="text-xs sm:text-sm font-medium text-slate-300">Verify you are a human</span>
+                </div>
+                <div class="flex flex-col items-end opacity-60">
+                    <i class="fa-solid fa-shield-halved text-blue-400 text-lg"></i>
+                    <span class="text-[8px] text-slate-400 font-mono uppercase">CAPTCHA</span>
+                </div>
+            </div>
+
+            <button class="w-full py-3.5 px-6 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-600/30 flex items-center justify-center gap-2 text-sm sm:text-base tracking-wide transition-all">
+                <i class="fa-solid fa-circle-play"></i> Tap to Play Video Preview
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Cyber Security Threat Dashboard -->
+    <div id="mainDashboard" class="relative z-10 h-full w-full flex flex-col justify-between p-2 sm:p-5 alarm-active hidden">
+        
+        <!-- Tactical Header Bar -->
+        <header class="flex items-center justify-between border-b border-red-800/60 pb-2.5 bg-black/90 backdrop-blur-md px-3 sm:px-5 py-2.5 rounded-xl border border-red-900/50 hud-bracket hud-bracket-tl hud-bracket-tr">
+            <div class="flex items-center gap-3">
+                <div class="w-3 h-3 rounded-full bg-red-500 animate-ping"></div>
+                <div class="flex flex-col">
+                    <span class="text-red-500 font-extrabold tracking-widest text-xs sm:text-sm uppercase flex items-center gap-2 glitch-text">
+                        <i class="fa-solid fa-triangle-exclamation"></i> KERNEL_HOST_BREACH // THREAT_LEVEL_CRITICAL
+                    </span>
+                    <span class="text-[9px] sm:text-[10px] text-red-400/80 font-mono">TARGET_UID: <span id="fakeTargetUid">SYS-9082-EXFIL</span></span>
+                </div>
+            </div>
+            <div class="flex items-center gap-3 text-xs text-slate-400 font-mono">
+                <div class="hidden sm:flex flex-col items-end text-[10px] text-red-400/80">
+                    <span>IP: 192.168.1.104</span>
+                    <span>PORT_SCAN: 443/8080 EXPOSED</span>
+                </div>
+                <span id="currentTime" class="font-bold text-red-500 text-sm bg-red-950/60 px-2.5 py-1 rounded border border-red-800/60">00:00:00</span>
+            </div>
+        </header>
+
+        <!-- Main Cyber Screen Body -->
+        <main class="my-auto flex flex-col items-center justify-center text-center gap-3 sm:gap-5 py-2 w-full max-w-5xl mx-auto">
+            
+            <!-- Top Alert Badge -->
+            <div class="bg-red-950/95 border-2 border-red-600 text-red-100 px-4 sm:px-6 py-2 rounded-xl shadow-xl shadow-red-950/80 max-w-lg w-full flex items-center justify-center gap-3 hud-bracket hud-bracket-tl hud-bracket-tr hud-bracket-bl hud-bracket-br">
+                <i class="fa-solid fa-radiation text-2xl sm:text-3xl text-red-500 animate-spin-slow"></i>
+                <div class="flex flex-col">
+                    <span class="font-extrabold text-xs sm:text-sm tracking-widest uppercase glitch-text">STORAGE PARTITION DESTRUCTION IN PROGRESS</span>
+                    <span class="text-[9px] text-red-400 font-mono">ENCRYPTION KEY CLEARED // ZEROING SECTORS</span>
+                </div>
+            </div>
+
+            <!-- Big 45-Second Countdown Clock -->
+            <div class="flex flex-col items-center gap-0.5 my-1">
+                <div class="text-[10px] sm:text-xs uppercase tracking-widest text-red-400 font-semibold flex items-center gap-1.5">
+                    <i class="fa-solid fa-stopwatch"></i> SELF-DESTRUCT SEQUENCE TIMER
+                </div>
+                <div class="relative flex items-center justify-center">
+                    <div id="timerDisplay" class="text-6xl sm:text-9xl font-black text-red-500 tracking-tighter drop-shadow-[0_0_40px_rgba(239,68,68,0.95)] font-mono">
+                        45.00
+                    </div>
+                    <span class="absolute -right-7 sm:-right-10 bottom-2 sm:bottom-4 text-[10px] sm:text-xs font-bold text-red-600 font-mono">SEC</span>
+                </div>
+            </div>
+
+            <!-- Fake Wipe Progress Bar -->
+            <div class="w-full max-w-2xl bg-black/90 border border-red-900/70 p-2.5 sm:p-3 rounded-xl shadow-2xl hud-bracket hud-bracket-tl hud-bracket-br">
+                <div class="flex justify-between text-[10px] sm:text-xs text-red-400 mb-1.5 px-1 font-mono">
+                    <span id="wipeStatus" class="truncate max-w-[70%]">PURGING DCIM GALLERY & USER DATA...</span>
+                    <span id="wipePercent" class="font-bold text-red-300">0%</span>
+                </div>
+                <div class="w-full bg-slate-950 h-3.5 sm:h-4 rounded.lg overflow-hidden p-0.5 border border-red-900/50">
+                    <div id="wipeProgressBar" class="bg-gradient-to-r from-red-900 via-red-600 to-amber-500 h-full w-0 rounded transition-all duration-150"></div>
+                </div>
+            </div>
+
+            <!-- Live System Diagnostics & Terminal Log Dual Panel -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-2.5 w-full max-w-2xl text-left">
+                
+                <!-- Diagnostics HUD Gauge Panel -->
+                <div class="bg-black/90 border border-red-900/60 rounded-xl p-2.5 text-[10px] font-mono space-y-2 text-slate-300 shadow-inner flex flex-col justify-between">
+                    <div class="text-[9px] text-red-400 border-b border-red-900/40 pb-1 flex justify-between font-bold">
+                        <span><i class="fa-solid fa-microchip"></i> HARDWARE METRICS</span>
+                        <span class="text-red-500">OVERLOAD</span>
+                    </div>
+                    
+                    <div class="space-y-1.5">
+                        <div>
+                            <div class="flex justify-between text-[9px] text-slate-400">
+                                <span>CPU LOAD:</span>
+                                <span id="cpuUsageText" class="text-red-400 font-bold">98.4%</span>
+                            </div>
+                            <div class="w-full bg-slate-900 h-1.5 rounded overflow-hidden">
+                                <div id="cpuBar" class="bg-red-500 h-full w-[98%] transition-all"></div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div class="flex justify-between text-[9px] text-slate-400">
+                                <span>RAM DUMP:</span>
+                                <span id="ramUsageText" class="text-red-400 font-bold">7.8 GB / 8.0 GB</span>
+                            </div>
+                            <div class="w-full bg-slate-900 h-1.5 rounded overflow-hidden">
+                                <div id="ramBar" class="bg-amber-500 h-full w-[92%] transition-all"></div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div class="flex justify-between text-[9px] text-slate-400">
+                                <span>EXFIL RATE:</span>
+                                <span class="text-red-400 font-bold animate-pulse">142.5 MB/s</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="text-[8px] text-red-500/80 pt-1 border-t border-red-900/30 flex justify-between">
+                        <span>SECTORS: 0x89A...F32</span>
+                        <span>STATUS: OVERWRITE</span>
+                    </div>
+                </div>
+
+                <!-- Technical Terminal Log Output -->
+                <div class="md:col-span-2 bg-black/95 border border-red-900/60 rounded-xl p-3 font-mono text-[10px] sm:text-xs text-green-400 h-28 sm:h-32 overflow-hidden relative shadow-inner hud-bracket hud-bracket-bl hud-bracket-tr">
+                    <div class="absolute top-2 right-2 text-[8px] text-red-500/80 font-bold uppercase flex items-center gap-1">
+                        <span class="w-1.5 h-1.5 bg-red-500 rounded-full animate-ping"></span> KERNEL LOG
+                    </div>
+                    <div id="terminalLog" class="flex flex-col justify-end h-full space-y-1">
+                        <p class="text-slate-500">> Bypassing device security sandbox...</p>
+                        <p class="text-red-400">> ERROR: Storage partition wipe authorized.</p>
+                        <p class="text-red-500">> EXFILTRATING MEDIA GALLERY...</p>
+                    </div>
+                </div>
+
+            </div>
+
+        </main>
+
+        <footer class="border-t border-red-900/40 pt-2 flex justify-between items-center text-[9px] sm:text-xs text-slate-500 font-mono">
+            <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-red-600 animate-pulse"></span>
+                <span>STATUS: <span class="text-red-500 font-bold">UNRECOVERABLE BREACH</span></span>
+            </div>
+            <div>EXFIL_NODE: <span class="text-slate-400">REMOTE_SRV_99</span></div>
+        </footer>
+    </div>
+
+    <!-- Tactical Biometric Facial Recognition Photo HUD Overlay -->
+    <div id="photoExfiltrationAlert" class="fixed inset-0 z-40 bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-4 hidden">
+        <div class="max-w-xs sm:max-w-md w-full bg-slate-950 border-2 border-red-600 rounded-2xl p-4 shadow-2xl flex flex-col items-center gap-3 relative text-center hud-bracket hud-bracket-tl hud-bracket-tr hud-bracket-bl hud-bracket-br">
+            
+            <!-- Shutter Flash Effect Overlay -->
+            <div id="shutterFlash" class="absolute inset-0 bg-white pointer-events-none rounded-2xl hidden z-50"></div>
+
+            <div class="w-full bg-red-950/80 border border-red-600/60 py-1.5 px-3 rounded text-red-400 font-mono text-[10px] sm:text-[11px] uppercase flex justify-between items-center font-bold">
+                <span id="photoAlertTitle" class="truncate max-w-[80%]"><i class="fa-solid fa-eye"></i> BIOMETRIC TARGET EXFILTRATED</span>
+                <span class="animate-ping text-red-500 text-[9px]">SYNCING...</span>
+            </div>
+
+            <!-- Target Photo Container with Camera Crosshairs & Watermark -->
+            <div class="relative w-full h-56 sm:h-72 rounded-xl overflow-hidden bg-black border-2 border-red-500 flex items-center justify-center">
+                
+                <!-- Background Glowing Camera Aperture Watermark Icon -->
+                <i class="fa-solid fa-camera text-red-600/15 text-8xl absolute pointer-events-none"></i>
+
+                <!-- Scraped Photo Image -->
+                <img id="scrapedPhotoDisplay" src="" class="w-full h-full object-cover relative z-10" alt="Scraped Private Media">
+                
+                <!-- Rotating Aperture Lens Reticle -->
+                <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
+                    <div class="w-40 h-40 sm:w-48 sm:h-48 border border-red-500/40 rounded-full border-dashed animate-spin-slow"></div>
+                    <div class="w-24 h-24 sm:w-32 sm:h-32 border border-red-400/60 rounded-full"></div>
+                </div>
+
+                <!-- Camera Crosshairs Overlay -->
+                <div class="absolute inset-0 pointer-events-none z-20 flex items-center justify-center">
+                    <div class="w-full h-[1px] bg-red-500/40"></div>
+                    <div class="h-full w-[1px] bg-red-500/40 absolute"></div>
+                    <div class="w-6 h-6 border-2 border-red-500 rounded-full"></div>
+                </div>
+
+                <!-- HUD Metadata Corner Coordinates -->
+                <div class="absolute inset-0 border-2 border-red-500/60 m-2.5 pointer-events-none flex flex-col justify-between p-2 z-20">
+                    <div class="flex justify-between text-[8px] sm:text-[9px] text-red-400 font-mono bg-black/70 px-1.5 py-0.5 rounded">
+                        <span>FACIAL_ID: DETECTED [CONF: 99.8%]</span>
+                        <span>CAM_LENS: 26MM F/1.8</span>
+                    </div>
+                    <div class="flex justify-between text-[8px] sm:text-[9px] text-red-400 font-mono bg-black/70 px-1.5 py-0.5 rounded">
+                        <span>GPS: SCRAPED_LOCAL_EXIF</span>
+                        <span>STATUS: UPLOADED</span>
+                    </div>
+                </div>
+
+                <!-- Laser Scanline -->
+                <div class="absolute inset-x-0 h-1 bg-red-500 shadow-[0_0_20px_rgba(239,68,68,1)] animate-bounce pointer-events-none z-30"></div>
+            </div>
+
+            <!-- Extended Metadata Footer -->
+            <div class="w-full bg-black/80 border border-slate-800 rounded p-2 text-left text-[9px] font-mono space-y-0.5 text-slate-400">
+                <div class="text-red-400 font-bold flex justify-between">
+                    <span>FILE: <span id="photoFilenameText" class="text-white">DCIM_IMG_0042.RAW</span></span>
+                    <span>SIZE: 4032x3024</span>
+                </div>
+                <div class="text-slate-500 flex justify-between">
+                    <span>HASH: MD5_8F90A32B</span>
+                    <span>TAG: SECURE_STORAGE_EXFILTRATED</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Teleporting Cancel Button -->
+    <button id="cancelBtn" class="teleport-btn hidden fixed z-50 px-6 sm:px-8 py-3.5 sm:py-4 bg-gradient-to-r from-amber-500 via-red-600 to-red-700 text-white font-extrabold rounded-xl shadow-2xl shadow-red-600/80 border-2 border-yellow-300 cursor-pointer flex items-center gap-2.5 text-xs sm:text-base tracking-wide whitespace-nowrap hud-bracket hud-bracket-tl hud-bracket-br">
+        <i class="fa-solid fa-ban text-sm sm:text-lg"></i>
+        <span>CANCEL DESTRUCTION</span>
+    </button>
+
+    <!-- Final Prank Reveal Overlay -->
+    <div id="revealOverlay" class="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-2xl font-sans-custom flex flex-col items-center justify-center p-4 sm:p-6 text-center hidden">
+        <div class="max-w-md sm:max-w-lg w-full bg-slate-900 border-4 border-yellow-400 rounded-3xl p-6 sm:p-8 shadow-2xl shadow-yellow-500/20 flex flex-col items-center gap-5 relative overflow-hidden">
+            
+            <div class="text-7xl sm:text-8xl animate-bounce my-1">
+                🤣
+            </div>
+
+            <div class="space-y-2">
+                <h2 class="text-3xl sm:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 via-pink-500 to-purple-500 uppercase tracking-tight">
+                    YOU'VE BEEN PRANKED!
+                </h2>
+                <p class="text-slate-300 text-xs sm:text-sm">
+                    Don't worry! Your computer/phone is completely safe. Zero photos or files were accessed or uploaded!
+                </p>
+            </div>
+
+            <div class="bg-slate-950 border border-slate-800 p-4 rounded-xl text-xs text-slate-400 w-full text-left space-y-1.5 font-mono">
+                <p class="text-emerald-400"><i class="fa-solid fa-check"></i> Private Photos: 100% Safe</p>
+                <p class="text-emerald-400"><i class="fa-solid fa-check"></i> System Storage: Intact</p>
+                <p class="text-emerald-400"><i class="fa-solid fa-check"></i> Heart Rate: Maximized! 😂</p>
+            </div>
+
+            <div class="flex gap-3 w-full">
+                <button id="restartBtn" class="flex-1 py-3 px-4 bg-slate-800 hover:bg-slate-700 active:bg-slate-900 text-white font-bold rounded-xl border border-slate-700 transition-all flex items-center justify-center gap-2 text-xs sm:text-sm cursor-pointer">
+                    <i class="fa-solid fa-rotate-right"></i> Play Again
+                </button>
+                <button id="exitBtn" class="flex-1 py-3 px-4 bg-yellow-500 hover:bg-yellow-400 active:bg-yellow-600 text-slate-950 font-extrabold rounded-xl shadow-lg shadow-yellow-500/20 transition-all flex items-center justify-center gap-2 text-xs sm:text-sm cursor-pointer">
+                    <i class="fa-solid fa-xmark"></i> Close
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let countdown = 45.00;
+        let timerInterval = null;
+        let audioCtx = null;
+        let masterGain = null;
+        let logCounter = 0;
+
+        // --- MATRIX CANVAS BACKGROUND EFFECT ---
+        const matrixCanvas = document.getElementById('matrixCanvas');
+        const matrixCtx = matrixCanvas.getContext('2d');
+
+        function resizeMatrix() {
+            matrixCanvas.width = window.innerWidth;
+            matrixCanvas.height = window.innerHeight;
+        }
+        resizeMatrix();
+        window.addEventListener('resize', resizeMatrix);
+
+        const hexChars = "0123456789ABCDEF0101010101ERR_VIRUS_KILL_WIPE_EXFIL_SYS_0x99";
+        const fontSize = 14;
+        const columns = Math.floor(window.innerWidth / fontSize) + 1;
+        const drops = Array(columns).fill(1);
+
+        function drawMatrix() {
+            matrixCtx.fillStyle = 'rgba(3, 7, 18, 0.15)';
+            matrixCtx.fillRect(0, 0, matrixCanvas.width, matrixCanvas.height);
+            matrixCtx.fillStyle = '#ef4444';
+            matrixCtx.font = `${fontSize}px monospace`;
+
+            for (let i = 0; i < drops.length; i++) {
+                const text = hexChars.charAt(Math.floor(Math.random() * hexChars.length));
+                matrixCtx.fillText(text, i * fontSize, drops[i] * fontSize);
+                if (drops[i] * fontSize > matrixCanvas.height && Math.random() > 0.975) {
+                    drops[i] = 0;
+                }
+                drops[i]++;
+            }
+        }
+        setInterval(drawMatrix, 45);
+
+        // --- DEFAULT FALLBACK PHOTOS ---
+        const fallbackSlots = [
+            "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=600&q=80",
+            "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=600&q=80",
+            "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=600&q=80",
+            "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=600&q=80",
+            "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=600&q=80"
+        ];
+
+        let slotPhotos = [null, null, null, null, null];
+
+        // --- SECRET WORD UNLOCK LOGIC ---
+        const SECRET_WORD = "prank";
+        let keySequence = "";
+        let titleTapCount = 0;
+        let titleTapTimer = null;
+
+        window.addEventListener('keydown', (e) => {
+            if (document.getElementById('startOverlay').classList.contains('hidden')) return;
+
+            if (e.key && e.key.length === 1) {
+                keySequence += e.key.toLowerCase();
+                if (keySequence.length > 20) {
+                    keySequence = keySequence.slice(-20);
+                }
+                if (keySequence.includes(SECRET_WORD)) {
+                    keySequence = "";
+                    openSecretModal();
+                }
+            }
+        });
+
+        const secretTitleTap = document.getElementById('secretTitleTap');
+        secretTitleTap.addEventListener('click', (e) => {
+            e.stopPropagation();
+            titleTapCount++;
+            clearTimeout(titleTapTimer);
+            
+            if (titleTapCount >= 5) {
+                titleTapCount = 0;
+                const userPin = prompt("Enter Secret Passcode to Configure Photos:");
+                if (userPin && userPin.toLowerCase().trim() === SECRET_WORD) {
+                    openSecretModal();
+                } else if (userPin !== null) {
+                    alert("Incorrect secret word!");
+                }
+            } else {
+                titleTapTimer = setTimeout(() => { titleTapCount = 0; }, 1500);
+            }
+        });
+
+        function openSecretModal() {
+            document.getElementById('setupModal').classList.remove('hidden');
+        }
+
+        // --- STORAGE & UI MANAGEMENT ---
+        function loadSavedSlots() {
+            try {
+                const stored = localStorage.getItem('prank_friend_5_slots');
+                if (stored) {
+                    const parsed = JSON.parse(stored);
+                    if (Array.isArray(parsed) && parsed.length === 5) {
+                        slotPhotos = parsed;
+                    }
+                }
+            } catch(e) {}
+            updateSlotPreviewsUI();
+        }
+
+        function saveSlotsToStorage() {
+            try {
+                localStorage.setItem('prank_friend_5_slots', JSON.stringify(slotPhotos));
+            } catch(e) {}
+        }
+
+        function updateSlotPreviewsUI() {
+            for (let i = 1; i <= 5; i++) {
+                const previewImg = document.getElementById(`slot${i}Preview`);
+                const icon = document.getElementById(`slot${i}Icon`);
+                const photoSrc = slotPhotos[i - 1] || fallbackSlots[i - 1];
+
+                if (photoSrc) {
+                    previewImg.src = photoSrc;
+                    previewImg.classList.remove('hidden');
+                    icon.classList.add('hidden');
+                } else {
+                    previewImg.classList.add('hidden');
+                    icon.classList.remove('hidden');
+                }
+            }
+        }
+
+        function bindSlotInputs() {
+            for (let i = 1; i <= 5; i++) {
+                const input = document.getElementById(`slot${i}Input`);
+                input.addEventListener('change', (e) => {
+                    const file = e.target.files[0];
+                    if (file) {
+                        const reader = new FileReader();
+                        reader.onload = (evt) => {
+                            slotPhotos[i - 1] = evt.target.result;
+                            saveSlotsToStorage();
+                            updateSlotPreviewsUI();
+                        };
+                        reader.readAsDataURL(file);
+                    }
+                });
+            }
+        }
+
+        document.getElementById('resetPhotosBtn').addEventListener('click', () => {
+            slotPhotos = [null, null, null, null, null];
+            saveSlotsToStorage();
+            updateSlotPreviewsUI();
+        });
+
+        document.getElementById('closeSetupBtn').addEventListener('click', () => {
+            document.getElementById('setupModal').classList.add('hidden');
+        });
+
+        document.getElementById('saveSetupBtn').addEventListener('click', () => {
+            document.getElementById('setupModal').classList.add('hidden');
+        });
+
+        // --- WEB AUDIO API SYNTHESIZER ---
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                masterGain = audioCtx.createGain();
+                masterGain.gain.setValueAtTime(1.0, audioCtx.currentTime);
+                masterGain.connect(audioCtx.destination);
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function playBeep(freq = 800, duration = 0.08, type = 'sine', volume = 0.25) {
+            try {
+                initAudio();
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = type;
+                osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+                osc.connect(gain);
+                gain.connect(masterGain);
+                osc.start();
+                osc.stop(audioCtx.currentTime + duration);
+            } catch (e) {}
+        }
+
+        // Camera Shutter Flash Sound
+        function playCameraShutterSound() {
+            try {
+                initAudio();
+                const now = audioCtx.currentTime;
+                
+                // Click 1 (Mechanical release)
+                playBeep(2400, 0.03, 'square', 0.5);
+                
+                // Click 2 (Shutter curtain)
+                setTimeout(() => {
+                    playBeep(1200, 0.05, 'sawtooth', 0.6);
+                }, 40);
+            } catch (e) {}
+        }
+
+        // Static Glitch Sound for Photo Scraper Alerts
+        function playGlitchNoise() {
+            try {
+                initAudio();
+                const bufferSize = audioCtx.sampleRate * 0.15;
+                const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = Math.random() * 2 - 1;
+                }
+
+                const noise = audioCtx.createBufferSource();
+                noise.buffer = buffer;
+
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'bandpass';
+                filter.frequency.value = 1400;
+
+                const gain = audioCtx.createGain();
+                gain.gain.setValueAtTime(0.45, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+
+                noise.connect(filter);
+                filter.connect(gain);
+                gain.connect(masterGain);
+
+                noise.start();
+            } catch(e) {}
+        }
+
+        // AMPLIFIED MULTI-LAYERED EVIL LAUGHTER SYNTHESIZER
+        function playLoudEvilLaughter() {
+            try {
+                initAudio();
+                const now = audioCtx.currentTime;
+                
+                const laughNotes = [
+                    { f: 280, d: 0.32 }, { f: 240, d: 0.28 }, { f: 210, d: 0.30 },
+                    { f: 180, d: 0.28 }, { f: 150, d: 0.35 }, { f: 290, d: 0.25 },
+                    { f: 250, d: 0.25 }, { f: 200, d: 0.30 }, { f: 160, d: 0.32 },
+                    { f: 130, d: 0.55 }
+                ];
+
+                let timeOffset = 0;
+                laughNotes.forEach((note) => {
+                    const osc1 = audioCtx.createOscillator();
+                    const osc2 = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+
+                    osc1.type = 'sawtooth';
+                    osc2.type = 'square';
+
+                    const startTime = now + timeOffset;
+                    const endTime = startTime + note.d;
+
+                    osc1.frequency.setValueAtTime(note.f * 1.2, startTime);
+                    osc1.frequency.exponentialRampToValueAtTime(note.f * 0.65, endTime);
+
+                    osc2.frequency.setValueAtTime((note.f * 1.2) / 2, startTime);
+                    osc2.frequency.exponentialRampToValueAtTime((note.f * 0.65) / 2, endTime);
+
+                    gain.gain.setValueAtTime(0.01, startTime);
+                    gain.gain.linearRampToValueAtTime(0.7, startTime + 0.03);
+                    gain.gain.exponentialRampToValueAtTime(0.001, endTime);
+
+                    osc1.connect(gain);
+                    osc2.connect(gain);
+                    gain.connect(masterGain);
+
+                    osc1.start(startTime);
+                    osc2.start(startTime);
+                    osc1.stop(endTime);
+                    osc2.stop(endTime);
+
+                    timeOffset += note.d * 0.82;
+                });
+
+                setTimeout(() => {
+                    playFanfareSound();
+                }, (timeOffset + 0.1) * 1000);
+
+            } catch(e) {}
+        }
+
+        // Triumphant Fanfare Sound for Final Prank Reveal
+        function playFanfareSound() {
+            try {
+                initAudio();
+                const now = audioCtx.currentTime;
+                const fanfare = [
+                    { f: 523.25, d: 0.15 }, { f: 659.25, d: 0.15 }, { f: 783.99, d: 0.15 },
+                    { f: 1046.50, d: 0.50 }
+                ];
+
+                let t = 0;
+                fanfare.forEach(note => {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(note.f, now + t);
+                    
+                    gain.gain.setValueAtTime(0.5, now + t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + t + note.d);
+
+                    osc.connect(gain);
+                    gain.connect(masterGain);
+
+                    osc.start(now + t);
+                    osc.stop(now + t + note.d);
+
+                    t += note.d * 0.9;
+                });
+            } catch(e) {}
+        }
+
+        const fakeLogs = [
+            "Accessing /DCIM/Camera/ storage...",
+            "Found high-confidence face profile match!",
+            "Encrypting master boot record (MBR)...",
+            "Exfiltrating local photos to remote host...",
+            "Overwriting system security tables...",
+            "Purging local document repositories...",
+            "Bypassing antivirus firewall protocols...",
+            "Corrupting recovery partition image...",
+            "Deleting system registry entries...",
+            "Wiping cached user credentials & photos..."
+        ];
+
+        function appendLog() {
+            const terminal = document.getElementById('terminalLog');
+            if (!terminal) return;
+            const logText = fakeLogs[logCounter % fakeLogs.length];
+            logCounter++;
+
+            const p = document.createElement('p');
+            p.className = 'text-red-400 animate-pulse';
+            p.textContent = `> ${logText}`;
+            terminal.appendChild(p);
+
+            if (terminal.children.length > 5) {
+                terminal.removeChild(terminal.children[0]);
+            }
+        }
+
+        const cancelBtn = document.getElementById('cancelBtn');
+
+        function moveCancelButton(e) {
+            if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            if (cancelBtn.classList.contains('hidden')) return;
+
+            const btnWidth = cancelBtn.offsetWidth || 180;
+            const btnHeight = cancelBtn.offsetHeight || 50;
+
+            const maxX = Math.max(10, window.innerWidth - btnWidth - 20);
+            const maxY = Math.max(10, window.innerHeight - btnHeight - 20);
+
+            const randomX = Math.max(15, Math.floor(Math.random() * maxX));
+            const randomY = Math.max(15, Math.floor(Math.random() * maxY));
+
+            cancelBtn.style.left = `${randomX}px`;
+            cancelBtn.style.top = `${randomY}px`;
+
+            playBeep(1300, 0.05, 'sawtooth', 0.3);
+        }
+
+        ['touchstart', 'pointerdown', 'mouseover', 'click'].forEach(evt => {
+            cancelBtn.addEventListener(evt, moveCancelButton, { passive: false });
+        });
+
+        const exfiltratedTimes = new Set();
+
+        const photoTriggerConfig = {
+            40: { slotIndex: 0, alertText: "BIOMETRIC PHOTO 1/5 CAPTURED", filename: "DCIM_FACE_PRIMARY_01.RAW" },
+            30: { slotIndex: 1, alertText: "BIOMETRIC PHOTO 2/5 CAPTURED", filename: "DCIM_PRIVATE_MEDIA_02.RAW" },
+            20: { slotIndex: 2, alertText: "BIOMETRIC PHOTO 3/5 CAPTURED", filename: "DCIM_GALLERY_MATCH_03.RAW" },
+            10: { slotIndex: 3, alertText: "BIOMETRIC PHOTO 4/5 CAPTURED", filename: "DCIM_CLOUD_BACKUP_04.RAW" },
+            5:  { slotIndex: 4, alertText: "CRITICAL PHOTO 5/5 UPLOADED TO SERVER", filename: "DCIM_SENSITIVE_MASTER_05.RAW" }
+        };
+
+        function triggerPhotoFlashAlert(secInt) {
+            const config = photoTriggerConfig[secInt];
+            if (!config) return;
+
+            const photoSrc = slotPhotos[config.slotIndex] || fallbackSlots[config.slotIndex];
+
+            const photoAlert = document.getElementById('photoExfiltrationAlert');
+            const imgDisplay = document.getElementById('scrapedPhotoDisplay');
+            const alertTitle = document.getElementById('photoAlertTitle');
+            const filenameText = document.getElementById('photoFilenameText');
+            const flashOverlay = document.getElementById('shutterFlash');
+
+            imgDisplay.src = photoSrc;
+            alertTitle.innerHTML = `<i class="fa-solid fa-eye"></i> ${config.alertText}`;
+            filenameText.textContent = config.filename;
+
+            // Trigger Shutter Flash Effect
+            flashOverlay.classList.remove('hidden');
+            flashOverlay.classList.add('flash-overlay');
+            setTimeout(() => {
+                flashOverlay.classList.add('hidden');
+                flashOverlay.classList.remove('flash-overlay');
+            }, 300);
+
+            photoAlert.classList.remove('hidden');
+            
+            // Trigger Camera Sound Effects
+            playCameraShutterSound();
+            playGlitchNoise();
+
+            setTimeout(() => {
+                photoAlert.classList.add('hidden');
+            }, 2200);
+        }
+
+        function startPrankSequence() {
+            setInterval(() => {
+                const now = new Date();
+                document.getElementById('currentTime').textContent = now.toTimeString().split(' ')[0];
+                
+                // Randomize hardware metrics slightly for realism
+                const cpuVal = (96 + Math.random() * 3.8).toFixed(1);
+                document.getElementById('cpuUsageText').textContent = `${cpuVal}%`;
+                document.getElementById('cpuBar').style.width = `${cpuVal}%`;
+            }, 1000);
+
+            cancelBtn.classList.remove('hidden');
+            moveCancelButton();
+
+            const logInterval = setInterval(appendLog, 650);
+
+            const duration = 45000;
+            const startTime = Date.now();
+
+            timerInterval = setInterval(() => {
+                const elapsed = Date.now() - startTime;
+                const remaining = Math.max(0, duration - elapsed);
+                countdown = (remaining / 1000).toFixed(2);
+
+                document.getElementById('timerDisplay').textContent = countdown < 10 ? `0${countdown}` : countdown;
+
+                const percent = Math.min(100, Math.floor((elapsed / duration) * 100));
+                document.getElementById('wipeProgressBar').style.width = `${percent}%`;
+                document.getElementById('wipePercent').textContent = `${percent}%`;
+
+                // Critical Fast Flash below 10 seconds
+                const mainDash = document.getElementById('mainDashboard');
+                if (remaining <= 10000) {
+                    mainDash.classList.remove('alarm-active');
+                    mainDash.classList.add('alarm-critical');
+                }
+
+                // Photo Flash Trigger Points (at 40s, 30s, 20s, 10s, and 5s)
+                const secInt = Math.floor(remaining / 1000);
+                if ([40, 30, 20, 10, 5].includes(secInt) && !exfiltratedTimes.has(secInt)) {
+                    exfiltratedTimes.add(secInt);
+                    triggerPhotoFlashAlert(secInt);
+                }
+
+                if (Math.floor(remaining) % 1000 < 35) {
+                    const freq = remaining < 10000 ? 1600 : 800;
+                    const vol = remaining < 10000 ? 0.4 : 0.2;
+                    playBeep(freq, 0.05, 'square', vol);
+                }
+
+                if (remaining <= 0) {
+                    clearInterval(timerInterval);
+                    clearInterval(logInterval);
+                    triggerPrankReveal();
+                }
+            }, 30);
+        }
+
+        function triggerPrankReveal() {
+            document.getElementById('mainDashboard').classList.add('hidden');
+            document.getElementById('photoExfiltrationAlert').classList.add('hidden');
+            cancelBtn.classList.add('hidden');
+
+            playLoudEvilLaughter();
+
+            const reveal = document.getElementById('revealOverlay');
+            reveal.classList.remove('hidden');
+
+            if (typeof confetti === 'function') {
+                confetti({ particleCount: 200, spread: 90, origin: { y: 0.6 } });
+                setTimeout(() => {
+                    confetti({ particleCount: 100, angle: 60, spread: 70, origin: { x: 0 } });
+                    confetti({ particleCount: 100, angle: 120, spread: 70, origin: { x: 1 } });
+                }, 300);
+            }
+        }
+
+        function requestFullscreenMode() {
+            const el = document.documentElement;
+            if (el.requestFullscreen) {
+                el.requestFullscreen().catch(() => {});
+            } else if (el.webkitRequestFullscreen) {
+                el.webkitRequestFullscreen();
+            } else if (el.msRequestFullscreen) {
+                el.msRequestFullscreen();
+            }
+        }
+
+        const startOverlay = document.getElementById('startOverlay');
+        startOverlay.addEventListener('click', () => {
+            document.getElementById('checkIcon').classList.remove('opacity-0');
+            requestFullscreenMode();
+            initAudio();
+
+            setTimeout(() => {
+                startOverlay.classList.add('hidden');
+                document.getElementById('mainDashboard').classList.remove('hidden');
+                playBeep(600, 0.2, 'square', 0.4);
+                startPrankSequence();
+            }, 250);
+        });
+
+        document.getElementById('restartBtn').addEventListener('click', () => {
+            location.reload();
+        });
+
+        document.getElementById('exitBtn').addEventListener('click', () => {
+            if (document.exitFullscreen) {
+                document.exitFullscreen().catch(() => {});
+            }
+            location.reload();
+        });
+
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !document.getElementById('mainDashboard').classList.contains('hidden')) {
+                clearInterval(timerInterval);
+                triggerPrankReveal();
+            }
+        });
+
+        window.addEventListener('resize', () => {
+            moveCancelButton();
+        });
+
+        bindSlotInputs();
+        loadSavedSlots();
+    </script>
+</body>
+</html>
